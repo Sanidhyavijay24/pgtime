@@ -1,6 +1,6 @@
-# pgtime — Temporal Tables for PostgreSQL
+# pgtime - Temporal Tables for PostgreSQL
 
-[![CI](https://github.com/yourorg/pgtime/actions/workflows/ci.yml/badge.svg)](https://github.com/yourorg/pgtime/actions/workflows/ci.yml)
+[![CI](https://github.com/Sanidhyavijay24/pgtime/actions/workflows/ci.yml/badge.svg)](https://github.com/Sanidhyavijay24/pgtime/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 > **Add a transaction-time versioning axis to any PostgreSQL table in one line.** Query your data at any point in the past, track every change automatically, and stay SQL-native.
