@@ -6,6 +6,7 @@
 
 -- Setup pgTAP
 CREATE EXTENSION IF NOT EXISTS pgtap;
+CREATE EXTENSION IF NOT EXISTS pgtime;
 
 -- Setup pgTAP plan (19 assertions total)
 SELECT plan(19);
