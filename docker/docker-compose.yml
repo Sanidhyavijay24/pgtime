@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  postgres:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: pgtime_dev_postgres
+    environment:
+      POSTGRES_PASSWORD: pgtime
+      POSTGRES_DB: pgtime_test
+    volumes:
+      - ..:/workspace
+    ports:
+      - '5432:5432'
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pgtime_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 5

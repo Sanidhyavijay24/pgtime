@@ -1,0 +1,37 @@
+# Compiled C Extension Objects
+extension/pgtime.so
+extension/pgtime.o
+extension/pgtime.bc
+extension/pgtime.index.bc
+
+# Go CLI Binaries
+cli/pgtime
+
+# Node Dependencies and Lockfiles
+node_modules/
+sdk/node/node_modules/
+sdk/node/bun.lockb
+
+# Python Caches and Build Artifacts
+__pycache__/
+*.pyc
+.pytest_cache/
+sdk/python/__pycache__/
+sdk/python/tests/__pycache__/
+sdk/python/pgtime/__pycache__/
+sdk/python/.pytest_cache/
+sdk/python/build/
+sdk/python/dist/
+sdk/python/*.egg-info/
+
+# Specification Files
+pgtime-full-spec.docx
+pgtime-full-spec.txt
+context.md
+
+# OS & IDE Files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log

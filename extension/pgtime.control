@@ -1,0 +1,5 @@
+# pgtime extension
+comment = 'Temporal tables for PostgreSQL'
+default_version = '0.1'
+module_pathname = '$libdir/pgtime'
+relocatable = true

@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test-extension:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Start Docker Dev Environment
+      run: |
+        cd docker
+        docker compose up -d
+
+    - name: Wait for Postgres Healthcheck
+      run: |
+        echo "Waiting for PostgreSQL database to be healthy..."
+        for i in {1..30}; do
+          if docker inspect --format='{{json .State.Health.Status}}' pgtime_dev_postgres | grep -q "healthy"; then
+            echo "Database is healthy and ready!"
+            exit 0
+          fi
+          echo "Waiting..."
+          sleep 1
+        done
+        echo "Database failed to become healthy in time."
+        exit 1
+
+    - name: Compile Extension inside Container
+      run: |
+        docker exec -t pgtime_dev_postgres make -C /workspace/extension
+
+    - name: Install Extension inside Container
+      run: |
+        docker exec -t pgtime_dev_postgres make install -C /workspace/extension
+
+    - name: Run pgTAP SQL Test Suite
+      run: |
+        docker exec -t pgtime_dev_postgres pg_prove -U postgres -d pgtime_test /workspace/tests/test_pgtime.sql
