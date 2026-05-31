@@ -10,13 +10,20 @@
 ## The Problem
 
 Every application eventually requires historical tracking:
-* **Audit logs:** Who changed what and when?
+* **Audit logs:** Who changed what, when, and what was the previous value?
 * **Point-in-time snapshots:** What did this dashboard look like on Jan 1st?
 * **System state rollback:** What was the state of the database before a bad deployment?
 
 The standard answer is to build it yourself—adding `created_at` / `updated_at`, custom history tables, and complicated join queries. It is boilerplate code every developer writes from scratch, writes slightly wrong (missing boundary edges), and maintains forever.
 
 `pgtime` handles this transparently at the database layer.
+
+## Why pgtime?
+
+* **Zero Boilerplate:** Enable full temporal version tracking on any table with a single command: `SELECT pgtime.attach('users');`.
+* **Compiled C Performance:** History capture is handled by an `AFTER ROW` trigger written in compiled ANSI C, minimizing database write overhead.
+* **Logarithmic Snapshot Queries:** Automatically indexes version ranges using PostgreSQL range types (`tstzrange`) and GiST indexes, ensuring fast point-in-time query execution.
+* **Native Developer SDKs:** Thin, type-safe client wrappers for Node.js (TypeScript) and Python make querying history and diffs straightforward in your application code.
 
 ---
 
