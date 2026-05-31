@@ -1,5 +1,5 @@
 {
   "extraPaths": [
-    "sdk/python"
+    "."
   ]
 }

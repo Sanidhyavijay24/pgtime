@@ -40,18 +40,16 @@ DELETE FROM orders WHERE id = 42;
 ### Step 4: Query Snapshots
 Query what the table looked like at any specific point in transaction history:
 ```sql
--- Reconstruct table state as of a timestamp
-SELECT * FROM pgtime.as_of('orders', '2026-06-01 10:00:00+00')
-  AS (id INT, item TEXT, price NUMERIC, sys_from TIMESTAMPTZ, sys_to TIMESTAMPTZ, valid_from TIMESTAMPTZ, valid_to TIMESTAMPTZ, _pgtime_op CHAR(1));
+-- Reconstruct table state as of a timestamp (no manual column lists needed!)
+SELECT * FROM orders_as_of('2026-06-01 10:00:00+00');
 ```
-*Note: Because PostgreSQL functions returning dynamic row schemas require type casts, the query needs an `AS (...)` definition list.*
+*Note: When you attach a table, pgtime dynamically generates typed helper functions (like `<table_name>_as_of`, `<table_name>_history`, and `<table_name>_diff`) inside your table schema so you can query temporal states natively.*
 
 ---
 
 ### Step 5: Read Row Audit Log
 See the full mutation ledger of a specific row over time:
 ```sql
-SELECT price, sys_from, _pgtime_op::text FROM pgtime.history('orders', 42)
-  AS (id INT, item TEXT, price NUMERIC, sys_from TIMESTAMPTZ, sys_to TIMESTAMPTZ, valid_from TIMESTAMPTZ, valid_to TIMESTAMPTZ, _pgtime_op CHAR(1));
+SELECT price, sys_from, _pgtime_op FROM orders_history(42);
 ```
 * **Output:** Will return version rows with `_pgtime_op` as `'I'` (Insert), `'U'` (Update), and `'D'` (Delete).

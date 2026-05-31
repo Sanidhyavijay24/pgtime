@@ -80,35 +80,35 @@ SELECT results_eq(
 
 -- 12. Test pgtime.as_of() before first insert
 SELECT is(
-    (SELECT count(*)::int FROM pgtime.as_of('public.items', (SELECT ts - interval '10 seconds' FROM test_timestamps WHERE event = 'after_insert')) AS (id int, name text, price numeric, sys_from timestamptz, sys_to timestamptz, valid_from timestamptz, valid_to timestamptz, _pgtime_op char(1))),
+    (SELECT count(*)::int FROM public.items_as_of((SELECT ts - interval '10 seconds' FROM test_timestamps WHERE event = 'after_insert'))),
     0,
     'as_of a timestamp before first insert should return empty set'
 );
 
 -- 13. Test pgtime.as_of() after insert
 SELECT set_eq(
-    $$ SELECT id, name, price FROM pgtime.as_of('public.items', (SELECT ts FROM test_timestamps WHERE event = 'after_insert')) AS (id int, name text, price numeric, sys_from timestamptz, sys_to timestamptz, valid_from timestamptz, valid_to timestamptz, _pgtime_op char(1)) $$,
+    $$ SELECT id, name, price FROM public.items_as_of((SELECT ts FROM test_timestamps WHERE event = 'after_insert')) $$,
     $$ VALUES (1, 'Widget A', 10.99::numeric) $$,
     'as_of a timestamp during the first version should return the version details'
 );
 
 -- 14. Test pgtime.as_of() after update
 SELECT set_eq(
-    $$ SELECT id, name, price FROM pgtime.as_of('public.items', (SELECT ts FROM test_timestamps WHERE event = 'after_update')) AS (id int, name text, price numeric, sys_from timestamptz, sys_to timestamptz, valid_from timestamptz, valid_to timestamptz, _pgtime_op char(1)) $$,
+    $$ SELECT id, name, price FROM public.items_as_of((SELECT ts FROM test_timestamps WHERE event = 'after_update')) $$,
     $$ VALUES (1, 'Widget A', 12.99::numeric) $$,
     'as_of a timestamp during the second version should return the updated details'
 );
 
 -- 15. Test pgtime.as_of() after delete
 SELECT is(
-    (SELECT count(*)::int FROM pgtime.as_of('public.items', (SELECT ts FROM test_timestamps WHERE event = 'after_delete')) AS (id int, name text, price numeric, sys_from timestamptz, sys_to timestamptz, valid_from timestamptz, valid_to timestamptz, _pgtime_op char(1))),
+    (SELECT count(*)::int FROM public.items_as_of((SELECT ts FROM test_timestamps WHERE event = 'after_delete'))),
     0,
     'as_of a timestamp after deletion should return empty set'
 );
 
 -- 16. Test pgtime.history() API
 SELECT results_eq(
-    $$ SELECT price, _pgtime_op::text FROM pgtime.history('public.items', 1) AS (id int, name text, price numeric, sys_from timestamptz, sys_to timestamptz, valid_from timestamptz, valid_to timestamptz, _pgtime_op char(1)) $$,
+    $$ SELECT price, _pgtime_op::text FROM public.items_history(1) $$,
     $$ VALUES (10.99::numeric, 'I'), (12.99::numeric, 'D') $$,
     'pgtime.history should list the complete change ledger for a given row id'
 );
@@ -122,7 +122,7 @@ SELECT is(
 
 -- 18. Test pgtime.diff() API
 SELECT results_eq(
-    $$ SELECT price, _pgtime_op::text FROM pgtime.diff('public.items', (SELECT ts FROM test_timestamps WHERE event = 'after_insert'), (SELECT ts FROM test_timestamps WHERE event = 'after_delete')) AS (id int, name text, price numeric, sys_from timestamptz, sys_to timestamptz, valid_from timestamptz, valid_to timestamptz, _pgtime_op char(1)) $$,
+    $$ SELECT price, _pgtime_op::text FROM public.items_diff((SELECT ts FROM test_timestamps WHERE event = 'after_insert'), (SELECT ts FROM test_timestamps WHERE event = 'after_delete')) $$,
     $$ VALUES (12.99::numeric, 'D') $$,
     'pgtime.diff should return rows created/modified between t1 and t2'
 );

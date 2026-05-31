@@ -96,6 +96,34 @@ BEGIN
   EXECUTE format('CREATE TRIGGER pgtime_trig AFTER INSERT OR UPDATE OR DELETE ON %I.%I ' ||
                  'FOR EACH ROW EXECUTE FUNCTION pgtime.pgtime_trigger_fn()',
                  v_schema_name, v_table_name);
+
+  -- Create helper functions for clean query UX (no AS clause needed)
+  EXECUTE format('CREATE OR REPLACE FUNCTION %I.%I(ts TIMESTAMPTZ) 
+                  RETURNS SETOF %I.%I AS $fn$
+                  BEGIN
+                    RETURN QUERY SELECT * FROM %I.%I 
+                    WHERE sys_from <= ts AND (sys_to IS NULL OR sys_to > ts);
+                  END;
+                  $fn$ LANGUAGE plpgsql',
+                 v_schema_name, v_table_name || '_as_of', v_schema_name, v_history_table, v_schema_name, v_history_table);
+
+  EXECUTE format('CREATE OR REPLACE FUNCTION %I.%I(row_id anyelement) 
+                  RETURNS SETOF %I.%I AS $fn$
+                  BEGIN
+                    RETURN QUERY SELECT * FROM %I.%I 
+                    WHERE %I = row_id ORDER BY sys_from ASC;
+                  END;
+                  $fn$ LANGUAGE plpgsql',
+                 v_schema_name, v_table_name || '_history', v_schema_name, v_history_table, v_schema_name, v_history_table, v_pk_column);
+
+  EXECUTE format('CREATE OR REPLACE FUNCTION %I.%I(t1 TIMESTAMPTZ, t2 TIMESTAMPTZ) 
+                  RETURNS SETOF %I.%I AS $fn$
+                  BEGIN
+                    RETURN QUERY SELECT * FROM %I.%I 
+                    WHERE sys_from > t1 AND sys_from <= t2 ORDER BY sys_from ASC;
+                  END;
+                  $fn$ LANGUAGE plpgsql',
+                 v_schema_name, v_table_name || '_diff', v_schema_name, v_history_table, v_schema_name, v_history_table);
 END;
 $$ LANGUAGE plpgsql;
 
@@ -133,6 +161,11 @@ BEGIN
   -- Delete metadata entry
   DELETE FROM pgtime._tracked_tables
   WHERE schema_name = v_schema_name AND table_name = v_table_name;
+
+  -- Drop helper functions
+  EXECUTE format('DROP FUNCTION IF EXISTS %I.%I(TIMESTAMPTZ)', v_schema_name, v_table_name || '_as_of');
+  EXECUTE format('DROP FUNCTION IF EXISTS %I.%I(anyelement)', v_schema_name, v_table_name || '_history');
+  EXECUTE format('DROP FUNCTION IF EXISTS %I.%I(TIMESTAMPTZ, TIMESTAMPTZ)', v_schema_name, v_table_name || '_diff');
 END;
 $$ LANGUAGE plpgsql;
 

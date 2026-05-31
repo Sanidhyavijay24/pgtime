@@ -150,14 +150,14 @@ CREATE EXTENSION pgtime;
 SELECT pgtime.attach('orders');
 
 -- That's it! Changes are now tracked automatically.
+-- Under the hood, this dynamically generates helper functions matching your table schema:
 
 -- 3. Query the past (fetch the state of orders as of Jan 15th, 2026)
-SELECT * FROM pgtime.as_of('orders', '2026-01-15 10:00:00+00') 
-  AS (id INT, item TEXT, price NUMERIC, sys_from TIMESTAMPTZ, sys_to TIMESTAMPTZ, valid_from TIMESTAMPTZ, valid_to TIMESTAMPTZ, _pgtime_op CHAR(1));
+-- No "AS (...)" column casting list required!
+SELECT * FROM orders_as_of('2026-01-15 10:00:00+00');
 
 -- 4. View a row's version ledger (auditing changes)
-SELECT price, sys_from, _pgtime_op FROM pgtime.history('orders', 42)
-  AS (id INT, item TEXT, price NUMERIC, sys_from TIMESTAMPTZ, sys_to TIMESTAMPTZ, valid_from TIMESTAMPTZ, valid_to TIMESTAMPTZ, _pgtime_op CHAR(1));
+SELECT price, sys_from, _pgtime_op FROM orders_history(42);
 ```
 
 ---
@@ -244,13 +244,15 @@ The repository includes complete, runnable example scripts for both Node.js (Typ
    ```
 
 ### Running the Node.js / TypeScript Example
-1. Install project dependencies in the repository root:
+1. Install project dependencies inside the Node SDK folder:
    ```bash
+   cd sdk/node
    bun install
+   cd ../..
    ```
 2. Run the example script:
    ```bash
-   bun run examples/node_example.ts
+   bun run --cwd sdk/node ../../examples/node_example.ts
    ```
 
 **Expected Console Output:**
@@ -323,6 +325,14 @@ Finished example run successfully.
    ```bash
    python examples/python_example.py
    ```
+
+---
+
+## Design Philosophy & Performance
+
+`pgtime` is built with a hybrid C and PL/pgSQL architecture designed to maximize write performance while simplifying administrative tasks:
+* **compiled C trigger (`pgtime.c`):** Writes are the most performance-sensitive part of temporal databases. The `AFTER ROW` mutation trigger is written in pure compiled C to run directly inside the PostgreSQL process space at native speeds. This eliminates the significant latency overhead of context-switching into PL/pgSQL interpreters on every single `INSERT`, `UPDATE`, or `DELETE`.
+* **PL/pgSQL setup (`pgtime--0.1.sql`):** Table attachments, metadata indexing, catalog checking, and helper function generations occur during one-time schema migrations. We use PL/pgSQL here to leverage Postgres' native schema safety, DDL execution, and catalog querying flexibility.
 
 ---
 

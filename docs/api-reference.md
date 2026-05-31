@@ -52,3 +52,27 @@ Returns all row versions created or modified in a table between two timestamps.
   * `table_name`: Source table.
   * `t1`: Start boundary timestamp.
   * `t2`: End boundary timestamp.
+
+---
+
+## Dynamically Generated Helper Functions (Recommended UX)
+
+When you run `SELECT pgtime.attach('orders');`, `pgtime` automatically generates three typed helper functions inside the target table's schema. These functions are bound to the history table's row-type, meaning **no manual `AS (...)` column definition list is required** when querying them from SQL clients:
+
+### `<schema>.<table_name>_as_of(ts TIMESTAMPTZ) -> SETOF <schema>.<table_name>_history`
+Reconstructs the point-in-time state (snapshot) of all active rows in the table at the target timestamp.
+```sql
+SELECT * FROM public.orders_as_of('2026-01-15 10:00:00+00');
+```
+
+### `<schema>.<table_name>_history(row_id ANYELEMENT) -> SETOF <schema>.<table_name>_history`
+Returns the chronological change ledger (audit log) of a specific row.
+```sql
+SELECT * FROM public.orders_history(42);
+```
+
+### `<schema>.<table_name>_diff(t1 TIMESTAMPTZ, t2 TIMESTAMPTZ) -> SETOF <schema>.<table_name>_history`
+Returns all row versions created or modified in the table between the two timestamps.
+```sql
+SELECT * FROM public.orders_diff('2026-01-01', '2026-02-01');
+```
