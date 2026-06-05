@@ -16,6 +16,18 @@
 
 PG_MODULE_MAGIC;
 
+#define MAX_CACHE_ENTRIES 64
+
+typedef struct {
+    Oid relid;
+    char pk_col[NAMEDATALEN];
+    Oid pk_type_oid;
+    bool is_valid;
+} RelationMetadataCacheEntry;
+
+static RelationMetadataCacheEntry rel_metadata_cache[MAX_CACHE_ENTRIES];
+static int rel_metadata_cache_count = 0;
+
 PG_FUNCTION_INFO_V1(pgtime_trigger_fn);
 
 static bool get_pk_metadata(const char *schema_name, const char *table_name, char **pk_col, Oid *pk_type_oid) {
@@ -24,7 +36,6 @@ static bool get_pk_metadata(const char *schema_name, const char *table_name, cha
     TupleDesc tupdesc;
     HeapTuple tuple;
     char *col;
-    char *type_oid_str;
     
     // Query metadata from pgtime._tracked_tables
     const char *query = "SELECT pk_column, pk_type::regtype::oid FROM pgtime._tracked_tables WHERE schema_name = $1 AND table_name = $2";
@@ -41,12 +52,15 @@ static bool get_pk_metadata(const char *schema_name, const char *table_name, cha
         tuple = SPI_tuptable->vals[0];
         
         col = SPI_getvalue(tuple, tupdesc, 1);
-        type_oid_str = SPI_getvalue(tuple, tupdesc, 2);
-        
         if (col) {
+            bool is_null;
+            Datum type_oid_datum;
+            
             *pk_col = pstrdup(col);
-            if (type_oid_str) {
-                *pk_type_oid = (Oid) strtoul(type_oid_str, NULL, 10);
+            
+            type_oid_datum = SPI_getbinval(tuple, tupdesc, 2, &is_null);
+            if (!is_null) {
+                *pk_type_oid = DatumGetObjectId(type_oid_datum);
             } else {
                 *pk_type_oid = InvalidOid;
             }
@@ -69,6 +83,9 @@ Datum pgtime_trigger_fn(PG_FUNCTION_ARGS) {
     char *nspname;
     char *pk_col = NULL;
     Oid pk_type_oid = InvalidOid;
+    Oid relid;
+    bool cache_found = false;
+    char *history_table_name = NULL;
     
     // Safety checks
     if (!CALLED_AS_TRIGGER(fcinfo)) {
@@ -76,6 +93,7 @@ Datum pgtime_trigger_fn(PG_FUNCTION_ARGS) {
     }
     
     rel = trigdata->tg_relation;
+    relid = RelationGetRelid(rel);
     
     if (TRIGGER_FIRED_BY_INSERT(trigdata->tg_event)) {
         new_tuple = trigdata->tg_trigtuple;
@@ -90,26 +108,63 @@ Datum pgtime_trigger_fn(PG_FUNCTION_ARGS) {
     } else {
         elog(ERROR, "pgtime_trigger_fn: unknown trigger event");
     }
-    
-    // Connect to Server Programming Interface (SPI)
-    if ((ret = SPI_connect()) != SPI_OK_CONNECT) {
-        elog(ERROR, "pgtime_trigger_fn: SPI_connect failed");
-    }
-    
-    // Retrieve schema and relation name
+
+    // Retrieve schema and relation name (fast metadata lookup)
     relname = RelationGetRelationName(rel);
     nspoid = rel->rd_rel->relnamespace;
     nspname = get_namespace_name(nspoid);
     if (!nspname) {
-        SPI_finish();
         elog(ERROR, "pgtime_trigger_fn: failed to get namespace name");
     }
-    
-    // Query tracked metadata for the table's primary key
-    if (!get_pk_metadata(nspname, relname, &pk_col, &pk_type_oid)) {
-        SPI_finish();
-        elog(ERROR, "pgtime_trigger_fn: table %s.%s is not registered in pgtime._tracked_tables", nspname, relname);
+
+    // 1. Check local session cache for table metadata
+    for (int i = 0; i < rel_metadata_cache_count; i++) {
+        if (rel_metadata_cache[i].relid == relid && rel_metadata_cache[i].is_valid) {
+            pk_col = rel_metadata_cache[i].pk_col;
+            pk_type_oid = rel_metadata_cache[i].pk_type_oid;
+            cache_found = true;
+            break;
+        }
     }
+
+    // 2. Connect to SPI and fetch metadata if not cached
+    if (!cache_found) {
+        char *temp_pk_col = NULL;
+        Oid temp_pk_type_oid = InvalidOid;
+
+        if ((ret = SPI_connect()) != SPI_OK_CONNECT) {
+            elog(ERROR, "pgtime_trigger_fn: SPI_connect failed");
+        }
+
+        if (!get_pk_metadata(nspname, relname, &temp_pk_col, &temp_pk_type_oid)) {
+            SPI_finish();
+            elog(ERROR, "pgtime_trigger_fn: table %s.%s is not registered in pgtime._tracked_tables", nspname, relname);
+        }
+
+        // Cache the metadata to avoid database lookup on subsequent operations
+        if (rel_metadata_cache_count < MAX_CACHE_ENTRIES) {
+            RelationMetadataCacheEntry *entry = &rel_metadata_cache[rel_metadata_cache_count++];
+            entry->relid = relid;
+            strncpy(entry->pk_col, temp_pk_col, NAMEDATALEN - 1);
+            entry->pk_col[NAMEDATALEN - 1] = '\0';
+            entry->pk_type_oid = temp_pk_type_oid;
+            entry->is_valid = true;
+            
+            pk_col = entry->pk_col;
+            pk_type_oid = entry->pk_type_oid;
+        } else {
+            // Fallback for cache overflow
+            pk_col = pstrdup(temp_pk_col);
+            pk_type_oid = temp_pk_type_oid;
+        }
+    } else {
+        // Connect to SPI to execute modification queries
+        if ((ret = SPI_connect()) != SPI_OK_CONNECT) {
+            elog(ERROR, "pgtime_trigger_fn: SPI_connect failed");
+        }
+    }
+
+    history_table_name = psprintf("%s_history", relname);
     
     // 1. UPDATE / DELETE: Supersede the current version by setting sys_to = now()
     if (op == 'U' || op == 'D') {
@@ -134,28 +189,28 @@ Datum pgtime_trigger_fn(PG_FUNCTION_ARGS) {
             elog(ERROR, "pgtime_trigger_fn: primary key value cannot be null");
         }
         
-        // Execute target row closing query
+        // Execute target row closing query safely utilizing quoted identifiers
         initStringInfo(&update_query);
         
         if (op == 'D') {
             // For Delete, close it and record operation as D (indicating it ended in deletion)
             appendStringInfo(&update_query, 
-                "UPDATE \"%s\".\"%s_history\" SET sys_to = transaction_timestamp(), _pgtime_op = 'D' "
-                "WHERE \"%s\" = $1 AND sys_to IS NULL",
-                nspname, relname, pk_col);
+                "UPDATE %s.%s SET sys_to = transaction_timestamp(), _pgtime_op = 'D' "
+                "WHERE %s = $1 AND sys_to IS NULL",
+                quote_identifier(nspname), quote_identifier(history_table_name), quote_identifier(pk_col));
         } else {
             // For Update, close the version
             appendStringInfo(&update_query, 
-                "UPDATE \"%s\".\"%s_history\" SET sys_to = transaction_timestamp() "
-                "WHERE \"%s\" = $1 AND sys_to IS NULL",
-                nspname, relname, pk_col);
+                "UPDATE %s.%s SET sys_to = transaction_timestamp() "
+                "WHERE %s = $1 AND sys_to IS NULL",
+                quote_identifier(nspname), quote_identifier(history_table_name), quote_identifier(pk_col));
         }
         
         argtypes[0] = pk_type_oid;
         values[0] = pk_val;
         
         ret = SPI_execute_with_args(update_query.data, 1, argtypes, values, NULL, false, 0);
-        if (ret < 0) {
+        if (ret != SPI_OK_UPDATE) {
             SPI_finish();
             elog(ERROR, "pgtime_trigger_fn: failed to update history row: SPI_execute_with_args returned %d", ret);
         }
@@ -197,7 +252,7 @@ Datum pgtime_trigger_fn(PG_FUNCTION_ARGS) {
                 appendStringInfo(&vals_info, ", ");
             }
             
-            appendStringInfo(&cols_info, "\"%s\"", NameStr(attr->attname));
+            appendStringInfo(&cols_info, "%s", quote_identifier(NameStr(attr->attname)));
             appendStringInfo(&vals_info, "$%d", param_idx);
             
             val = SPI_getbinval(new_tuple, tupdesc, i + 1, &is_null);
@@ -218,11 +273,11 @@ Datum pgtime_trigger_fn(PG_FUNCTION_ARGS) {
         nulls[param_idx - 1] = ' ';
         
         initStringInfo(&insert_query);
-        appendStringInfo(&insert_query, "INSERT INTO \"%s\".\"%s_history\" (%s) VALUES (%s)",
-                         nspname, relname, cols_info.data, vals_info.data);
+        appendStringInfo(&insert_query, "INSERT INTO %s.%s (%s) VALUES (%s)",
+                         quote_identifier(nspname), quote_identifier(history_table_name), cols_info.data, vals_info.data);
                          
         ret = SPI_execute_with_args(insert_query.data, param_idx, argtypes, values, nulls, false, 0);
-        if (ret < 0) {
+        if (ret != SPI_OK_INSERT) {
             SPI_finish();
             elog(ERROR, "pgtime_trigger_fn: failed to insert history row: SPI_execute_with_args returned %d", ret);
         }

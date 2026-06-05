@@ -8,8 +8,8 @@
 CREATE EXTENSION IF NOT EXISTS pgtap;
 CREATE EXTENSION IF NOT EXISTS pgtime;
 
--- Setup pgTAP plan (19 assertions total)
-SELECT plan(19);
+-- Setup pgTAP plan (29 assertions total)
+SELECT plan(29);
 
 -- 1. Verify extension is loaded
 SELECT has_extension('pgtime');
@@ -133,7 +133,113 @@ SELECT lives_ok(
     'pgtime.detach should execute successfully'
 );
 
--- Cleanup
+-- Setup for additional audits (Multi-UPDATE, Detach validation, Multi-schema namespaces)
+-- Create second test table for multi-update and detach checks
+CREATE TABLE public.items2 (
+    id INT PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
+-- 20. Attach items2
+SELECT lives_ok(
+    $$ SELECT pgtime.attach('public.items2') $$,
+    'pgtime.attach should attach tracking to items2 successfully'
+);
+
+-- Perform multi-update
+INSERT INTO public.items2 (id, name) VALUES (10, 'Alpha');
+UPDATE public.items2 SET name = 'Beta' WHERE id = 10;
+UPDATE public.items2 SET name = 'Gamma' WHERE id = 10;
+
+-- 21. Verify 3 history versions exist (I, U, U)
+SELECT results_eq(
+    $$ SELECT name, _pgtime_op::text FROM public.items2_history ORDER BY sys_from ASC $$,
+    $$ VALUES ('Alpha', 'I'), ('Beta', 'U'), ('Gamma', 'U') $$,
+    'Multi-update sequence should create 3 versions: I, U, U'
+);
+
+-- 22. Detach items2
+SELECT lives_ok(
+    $$ SELECT pgtime.detach('public.items2') $$,
+    'pgtime.detach should detach tracking from items2 successfully'
+);
+
+-- Perform insert/update post-detach (should not be logged to history)
+INSERT INTO public.items2 (id, name) VALUES (20, 'Delta');
+UPDATE public.items2 SET name = 'Epsilon' WHERE id = 10;
+
+-- 23. Verify history count did not change
+SELECT is(
+    (SELECT count(*)::int FROM public.items2_history),
+    3,
+    'Operations after detach should not write to history table'
+);
+
+-- Clean up items2
+DROP TABLE IF EXISTS public.items2 CASCADE;
+DROP TABLE IF EXISTS public.items2_history CASCADE;
+
+-- Test Multi-schema namespace conflicts
+CREATE SCHEMA schema_a;
+CREATE SCHEMA schema_b;
+
+CREATE TABLE schema_a.users (
+    id INT PRIMARY KEY,
+    username TEXT NOT NULL
+);
+
+CREATE TABLE schema_b.users (
+    id INT PRIMARY KEY,
+    username TEXT NOT NULL
+);
+
+-- 24. Attach schema_a.users
+SELECT lives_ok(
+    $$ SELECT pgtime.attach('schema_a.users') $$,
+    'Attach on schema_a.users should succeed'
+);
+
+-- 25. Attach schema_b.users
+SELECT lives_ok(
+    $$ SELECT pgtime.attach('schema_b.users') $$,
+    'Attach on schema_b.users should succeed'
+);
+
+-- Perform writes in different schemas
+INSERT INTO schema_a.users VALUES (1, 'alice_a');
+INSERT INTO schema_b.users VALUES (1, 'bob_b');
+
+-- 26. Verify schema_a.users_history has correct records
+SELECT results_eq(
+    $$ SELECT username, _pgtime_op::text FROM schema_a.users_history $$,
+    $$ VALUES ('alice_a', 'I') $$,
+    'schema_a history trigger should fire independently'
+);
+
+-- 27. Verify schema_b.users_history has correct records
+SELECT results_eq(
+    $$ SELECT username, _pgtime_op::text FROM schema_b.users_history $$,
+    $$ VALUES ('bob_b', 'I') $$,
+    'schema_b history trigger should fire independently'
+);
+
+-- 28. Detach schema_a.users
+SELECT lives_ok(
+    $$ SELECT pgtime.detach('schema_a.users') $$,
+    'Detach on schema_a.users should succeed'
+);
+
+-- 29. Detach schema_b.users
+SELECT lives_ok(
+    $$ SELECT pgtime.detach('schema_b.users') $$,
+    'Detach on schema_b.users should succeed'
+);
+
+-- Cleanup schemas
+DROP SCHEMA schema_a CASCADE;
+DROP SCHEMA schema_b CASCADE;
+
+-- Cleanup main items
 DROP TABLE IF EXISTS public.items CASCADE;
 DROP TABLE IF EXISTS public.items_history CASCADE;
 
