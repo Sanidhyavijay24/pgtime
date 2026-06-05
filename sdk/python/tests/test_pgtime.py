@@ -41,6 +41,7 @@ def test_e2e_sdk_flow(db_conn):
     try:
         # 1. Attach tracking
         pt.attach("public.py_items")
+        db_conn.commit()
         
         # Verify metadata registration
         meta = pt._get_tracked_metadata("public.py_items")
@@ -112,6 +113,7 @@ def test_e2e_sdk_flow(db_conn):
         
         # 8. Detach
         pt.detach("public.py_items")
+        db_conn.commit()
         with pytest.raises(ValueError):
             pt._get_tracked_metadata("public.py_items")
             

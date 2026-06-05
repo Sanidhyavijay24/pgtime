@@ -42,15 +42,28 @@ class PgTime:
         """
         self._validate_table_name(table)
         
-        query = """
-            SELECT schema_name, table_name, pk_column, pk_type
-            FROM pgtime._tracked_tables
-            WHERE table_name = %s OR (schema_name || '.' || table_name) = %s
-            LIMIT 1;
-        """
+        if "." in table:
+            parts = table.split(".")
+            schema = parts[0]
+            name = parts[1]
+            query = """
+                SELECT schema_name, table_name, pk_column, pk_type
+                FROM pgtime._tracked_tables
+                WHERE schema_name = %s AND table_name = %s
+                LIMIT 1;
+            """
+            params = (schema, name)
+        else:
+            query = """
+                SELECT schema_name, table_name, pk_column, pk_type
+                FROM pgtime._tracked_tables
+                WHERE table_name = %s
+                LIMIT 1;
+            """
+            params = (table,)
         
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(query, (table, table))
+            cur.execute(query, params)
             row = cur.fetchone()
             if not row:
                 raise ValueError(f"Table '{table}' is not currently tracked by pgtime.")
@@ -65,7 +78,6 @@ class PgTime:
         self._validate_table_name(table)
         with self.conn.cursor() as cur:
             cur.execute("SELECT pgtime.attach(%s);", (table,))
-        self.conn.commit()
 
     def detach(self, table: str) -> None:
         """
@@ -76,7 +88,6 @@ class PgTime:
         self._validate_table_name(table)
         with self.conn.cursor() as cur:
             cur.execute("SELECT pgtime.detach(%s);", (table,))
-        self.conn.commit()
 
     def as_of(self, table: str, timestamp: Union[datetime, str]) -> List[Dict[str, Any]]:
         """
@@ -94,28 +105,37 @@ class PgTime:
             # Parse ISO string, mapping Z suffix to UTC offset
             ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
             
-        query = f'SELECT * FROM "{schema}"."{tbl}_history" WHERE sys_from <= %s AND (sys_to IS NULL OR sys_to > %s);'
+        from psycopg2 import sql
+        query = sql.SQL('SELECT * FROM {schema}.{table} WHERE sys_from <= %s AND (sys_to IS NULL OR sys_to > %s);').format(
+            schema=sql.Identifier(schema),
+            table=sql.Identifier(tbl + "_history")
+        )
         
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(query, (ts, ts))
             return cur.fetchall()
 
-    def history(self, table: str, id: Any) -> List[Dict[str, Any]]:
+    def history(self, table: str, row_id: Any) -> List[Dict[str, Any]]:
         """
         Retrieve the complete change history (audit ledger) for a row by its primary key.
         
         :param table: Table name.
-        :param id: Primary key value of the row.
+        :param row_id: Primary key value of the row.
         """
         meta = self._get_tracked_metadata(table)
         schema = meta["schema_name"]
         tbl = meta["table_name"]
         pk = meta["pk_column"]
         
-        query = f'SELECT * FROM "{schema}"."{tbl}_history" WHERE "{pk}" = %s ORDER BY sys_from ASC;'
+        from psycopg2 import sql
+        query = sql.SQL('SELECT * FROM {schema}.{table} WHERE {pk} = %s ORDER BY sys_from ASC;').format(
+            schema=sql.Identifier(schema),
+            table=sql.Identifier(tbl + "_history"),
+            pk=sql.Identifier(pk)
+        )
         
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(query, (id,))
+            cur.execute(query, (row_id,))
             return cur.fetchall()
 
     def diff(self, table: str, t_from: Union[datetime, str], t_to: Union[datetime, str]) -> List[Dict[str, Any]]:
@@ -137,7 +157,14 @@ class PgTime:
         if isinstance(ts_to, str):
             ts_to = datetime.fromisoformat(ts_to.replace("Z", "+00:00"))
             
-        query = f'SELECT * FROM "{schema}"."{tbl}_history" WHERE sys_from > %s AND sys_from <= %s ORDER BY sys_from ASC;'
+        if ts_from >= ts_to:
+            raise ValueError("The 't_from' timestamp must be strictly earlier than 't_to'.")
+
+        from psycopg2 import sql
+        query = sql.SQL('SELECT * FROM {schema}.{table} WHERE sys_from > %s AND sys_from <= %s ORDER BY sys_from ASC;').format(
+            schema=sql.Identifier(schema),
+            table=sql.Identifier(tbl + "_history")
+        )
         
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(query, (ts_from, ts_to))

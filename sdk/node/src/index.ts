@@ -33,6 +33,13 @@ export class PgTime {
   }
 
   /**
+   * Escape identifier for SQL queries to prevent injection.
+   */
+  private escapeIdentifier(str: string): string {
+    return '"' + str.replace(/"/g, '""') + '"';
+  }
+
+  /**
    * Resolve a table name to its tracked metadata (schema, table, pk).
    */
   private async getTrackedMetadata(
@@ -40,14 +47,31 @@ export class PgTime {
   ): Promise<{ schema_name: string; table_name: string; pk_column?: string }> {
     this.validateTableName(table);
 
-    const query = `
-      SELECT schema_name, table_name, pk_column 
-      FROM pgtime._tracked_tables 
-      WHERE table_name = $1 OR (schema_name || '.' || table_name) = $1 
-      LIMIT 1;
-    `;
+    let query: string;
+    let params: string[];
 
-    const res = await this.client.query(query, [table]);
+    if (table.includes('.')) {
+      const parts = table.split('.');
+      const schema = parts[0] ?? '';
+      const name = parts[1] ?? '';
+      query = `
+        SELECT schema_name, table_name, pk_column 
+        FROM pgtime._tracked_tables 
+        WHERE schema_name = $1 AND table_name = $2
+        LIMIT 1;
+      `;
+      params = [schema, name];
+    } else {
+      query = `
+        SELECT schema_name, table_name, pk_column 
+        FROM pgtime._tracked_tables 
+        WHERE table_name = $1
+        LIMIT 1;
+      `;
+      params = [table];
+    }
+
+    const res = await this.client.query(query, params);
     if (res.rowCount === 0) {
       throw new Error(`Table "${table}" is not currently tracked by pgtime.`);
     }
@@ -82,8 +106,11 @@ export class PgTime {
     const { schema_name, table_name } = await this.getTrackedMetadata(table);
     const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
 
+    const escSchema = this.escapeIdentifier(schema_name);
+    const escHistoryTable = this.escapeIdentifier(table_name + '_history');
+
     const query = `
-      SELECT * FROM "${schema_name}"."${table_name}_history" 
+      SELECT * FROM ${escSchema}.${escHistoryTable} 
       WHERE sys_from <= $1 AND (sys_to IS NULL OR sys_to > $1);
     `;
 
@@ -99,9 +126,13 @@ export class PgTime {
   async history<T = any>(table: string, id: any): Promise<T[]> {
     const { schema_name, table_name, pk_column } = await this.getTrackedMetadata(table);
 
+    const escSchema = this.escapeIdentifier(schema_name);
+    const escHistoryTable = this.escapeIdentifier(table_name + '_history');
+    const escPkColumn = this.escapeIdentifier(pk_column || '');
+
     const query = `
-      SELECT * FROM "${schema_name}"."${table_name}_history" 
-      WHERE "${pk_column}" = $1 
+      SELECT * FROM ${escSchema}.${escHistoryTable} 
+      WHERE ${escPkColumn} = $1 
       ORDER BY sys_from ASC;
     `;
 
@@ -120,8 +151,15 @@ export class PgTime {
     const dateFrom = from instanceof Date ? from : new Date(from);
     const dateTo = to instanceof Date ? to : new Date(to);
 
+    if (dateFrom.getTime() >= dateTo.getTime()) {
+      throw new Error(`The 'from' timestamp must be strictly earlier than the 'to' timestamp.`);
+    }
+
+    const escSchema = this.escapeIdentifier(schema_name);
+    const escHistoryTable = this.escapeIdentifier(table_name + '_history');
+
     const query = `
-      SELECT * FROM "${schema_name}"."${table_name}_history" 
+      SELECT * FROM ${escSchema}.${escHistoryTable} 
       WHERE sys_from > $1 AND sys_from <= $2 
       ORDER BY sys_from ASC;
     `;
