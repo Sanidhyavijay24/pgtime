@@ -13,6 +13,7 @@ import (
 	"os"
 	"text/tabwriter"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/spf13/cobra"
 )
 
@@ -55,9 +56,11 @@ var historyCmd = &cobra.Command{
 		}
 
 		// 2. Query the history table directly to allow dynamic column scanning
+		ident := pgx.Identifier{schemaName, tableName + "_history"}
 		historyQuery := fmt.Sprintf(
-			"SELECT * FROM \"%s\".\"%s_history\" WHERE \"%s\" = $1 ORDER BY sys_from ASC;",
-			schemaName, tableName, pkColumn,
+			"SELECT * FROM %s WHERE %s = $1 ORDER BY sys_from ASC;",
+			ident.Sanitize(),
+			pgx.Identifier{pkColumn}.Sanitize(),
 		)
 
 		rows, err := conn.Query(ctx, historyQuery, historyID)

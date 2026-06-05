@@ -13,6 +13,7 @@ import (
 	"os"
 	"text/tabwriter"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/spf13/cobra"
 )
 
@@ -56,9 +57,10 @@ var diffCmd = &cobra.Command{
 		}
 
 		// 2. Query history table for changes in the time range
+		ident := pgx.Identifier{schemaName, tableName + "_history"}
 		diffQuery := fmt.Sprintf(
-			"SELECT * FROM \"%s\".\"%s_history\" WHERE sys_from > $1 AND sys_from <= $2 ORDER BY sys_from ASC;",
-			schemaName, tableName,
+			"SELECT * FROM %s WHERE sys_from > $1 AND sys_from <= $2 ORDER BY sys_from ASC;",
+			ident.Sanitize(),
 		)
 
 		rows, err := conn.Query(ctx, diffQuery, diffFrom, diffTo)
@@ -95,7 +97,11 @@ var diffCmd = &cobra.Command{
 		}
 
 		if diffFormat == "json" {
-			data, _ := json.MarshalIndent(resultList, "", "  ")
+			data, err := json.MarshalIndent(resultList, "", "  ")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error formatting JSON output: %v\n", err)
+				os.Exit(1)
+			}
 			fmt.Println(string(data))
 		} else {
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
