@@ -27,6 +27,7 @@ Reconstructs the point-in-time state (snapshot) of a table at the specified time
   * `table_name`: Table to query.
   * `ts`: Target snapshot timestamp.
 * **Query Signature Requirement:** Callers must append an `AS (column_definitions...)` signature representing the shadow history table columns.
+* **PostgreSQL Limitation:** Calling the generic SQL functions directly is clunky due to this required signature. For direct SQL querying, we strongly recommend using the auto-generated typed helper functions (e.g., `<table_name>_as_of()`), which return defined rows and require no signature.
 
 ---
 
@@ -52,6 +53,7 @@ Returns all row versions created or modified in a table between two timestamps.
   * `table_name`: Source table.
   * `t1`: Start boundary timestamp.
   * `t2`: End boundary timestamp.
+* **Exclusive Left Bound:** The function filters records where `sys_from > t1` and `sys_from <= t2`, implementing a half-open interval. A version created at the exact microsecond of `t1` is excluded.
 
 ---
 
