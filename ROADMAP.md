@@ -24,6 +24,12 @@ This roadmap outlines the planned features, architectural improvements, and dist
   * Implement `pgtime.archive(table, before_timestamp)` to offload expired history records to cold storage or files.
   * Integrate automatic history table partitioning based on the `sys_from` transaction date out of the box.
 
+### 5. High-Throughput Write Path Optimizations (C-Trigger)
+* **Objective:** Maximize write performance by reducing context switching and execution planning overhead.
+* **Details:**
+  * **Prepared SPI Plans**: Cache prepared plans (`SPI_prepare`) in relation metadata cache entries to bypass query parsing and planning stages on subsequent row modifications.
+  * **Transition Tables / Batch Operations**: Explore migrating row-level C triggers to statement-level triggers utilizing transition tables (`REFERENCING NEW TABLE`) to insert/update historical snapshots in bulk instead of row-by-row.
+
 ---
 
 ## v0.2 Milestone: Tooling, SDKs & Distribution
